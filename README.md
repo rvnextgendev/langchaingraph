@@ -185,6 +185,34 @@ available in your account with tool calling for agent mode. See the
 [Groq model list](https://console.groq.com/docs/models) and
 [LangChain Groq integration](https://docs.langchain.com/oss/python/integrations/chat/groq).
 
+## Deploy to Streamlit Community Cloud
+
+Use repository `rvnextgendev/langchaingraph`, branch `main`, and entrypoint
+`streamlit_app.py`. Select Python 3.11 in the deployment's advanced settings
+to match the locally tested interpreter.
+
+The root `requirements.txt` installs this project with its `ui` extras, including
+Groq and Streamlit. It also makes the `src/order_assistant` package importable.
+`pyproject.toml` defines the dependencies and supports Python `>=3.11,<4`.
+The upper bound prevents the Poetry resolution error about LangChain not
+supporting Python 4. Community Cloud gives `requirements.txt` precedence over
+`pyproject.toml`; see the [deployment dependency documentation](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies).
+
+Your local `.env` is excluded from Git and is not uploaded to Community Cloud.
+In the deployed app's **Settings → Secrets**, add these root-level TOML settings:
+
+```toml
+GROQ_API_KEY = "your_new_groq_api_key"
+LLM_PROVIDER = "groq"
+LLM_MODEL = "your_available_groq_model_id"
+```
+
+Keep these keys at the top level, without a section header, so Streamlit exposes
+them as environment variables for the existing settings loader. Use a model
+available in your Groq account; agent mode needs tool calling. Save secrets and
+reboot the app if the failed deployment does not rebuild automatically.
+See [Community Cloud secrets management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
+
 ## Optional Groq CLI examples
 
 ```powershell

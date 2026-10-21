@@ -1,0 +1,2 @@
+# Streamlit Community Cloud: install this src-layout project and its UI extras.
+-e .[ui]
