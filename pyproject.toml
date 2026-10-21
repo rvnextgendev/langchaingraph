@@ -11,7 +11,8 @@ dependencies = ["langgraph>=1,<2"]
 
 [project.optional-dependencies]
 llm = ["langchain>=1,<2", "langchain-groq>=1,<2", "python-dotenv>=1,<2"]
-ui = ["streamlit>=1.66,<2", "langchain>=1,<2", "langchain-groq>=1,<2", "python-dotenv>=1,<2"]
+ui = ["streamlit>=1.66,<2", "langchain>=1,<2", "langchain-groq>=1,<2", "python-dotenv>=1,<2", "chromadb>=1,<2"]
+rag = ["chromadb>=1,<2", "langchain>=1,<2", "langchain-groq>=1,<2", "python-dotenv>=1,<2"]
 dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
 
 [project.scripts]

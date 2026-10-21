@@ -364,15 +364,15 @@ print(answer_request("rag", "How long does standard shipping take?"))
 
 The answer includes references such as `[1]`, followed by retrieved evidence
 with filenames, paragraph locations, and original excerpts. Groq credentials are
-needed for generation when evidence is found. A query with no keyword matches,
-such as `quantum astrophysics`, returns an unavailable-evidence message without
-creating a model or making a provider call.
+needed for generation when evidence is found. Results outside the configured
+cosine-distance cutoff return an unavailable-evidence message without a Groq call.
+The question itself is still embedded locally to run similarity search.
 
 ### How it works
 
 ```text
-Markdown files -> paragraph chunks -> cached passages
-question -> retrieve top keyword matches -> evidence gate
+Markdown files -> paragraph chunks -> local MiniLM embeddings -> Chroma on disk
+question -> local question embedding -> cosine similarity search -> evidence gate
     -> matches: Groq answer -> citation-ID check -> answer + excerpts -> END
     -> no matches: unavailable-evidence message -> END
 ```
@@ -381,16 +381,67 @@ question -> retrieve top keyword matches -> evidence gate
 | --- | --- |
 | `src/order_assistant/policies/returns.md` | Fictional return and refund policy. |
 | `src/order_assistant/policies/shipping.md` | Fictional shipping and tracking policy. |
-| `src/order_assistant/retrieval.py` | Load Markdown, split into bounded chunks, rank keyword overlap, return up to three passages. |
+| `src/order_assistant/retrieval.py` | Load/split Markdown and choose vector retrieval (default) or keyword retrieval. |
+| `src/order_assistant/vector_store.py` | Generate MiniLM embeddings, synchronize Chroma, and search with a distance cutoff. |
 | `src/order_assistant/rag_workflow.py` | Retrieve/evidence/answer branches, grounded prompt, citation checks and source rendering. |
 | `src/order_assistant/service.py` | Expose the `rag` mode to both interfaces. |
 
-This first implementation uses lexical retrieval, not embeddings or a vector
-store. It needs no embedding download, embedding API key, or additional retrieval
-package. Chunk preparation is cached by document contents with a bounded cache;
-files are read on each request, so edits automatically refresh the passages.
-There is no separate ingestion command or persistent index to rebuild.
-The policy Markdown files are included in the Python package for installed use.
+### Embeddings and persistent vector storage
+
+The default retriever uses Chroma's local `all-MiniLM-L6-v2` embedding function
+(ONNX runtime). Groq still generates the final answer. No embedding API key or
+paid embedding endpoint is required. On first use the embedding model downloads
+automatically; allow internet access, disk space, and extra startup time.
+Subsequent calls reuse the cached model and existing document vectors.
+
+Install or update dependencies, then build the index without calling Groq:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[ui,dev]"
+.\.venv\Scripts\python.exe -m order_assistant index
+.\.venv\Scripts\python.exe -m order_assistant rag --question "How do I get my money back?"
+```
+
+For terminal-only use, install `.[rag]`. Streamlit's `.[ui]` extra and the cloud
+`requirements.txt` already include Chroma. A separate indexing command is optional:
+the first policy query also synchronizes documents automatically.
+
+Optional `.env` settings:
+
+```dotenv
+RAG_BACKEND=vector
+CHROMA_DB_DIR=.data/chroma
+RAG_MAX_DISTANCE=0.65
+```
+
+When `CHROMA_DB_DIR` is absent or blank, storage defaults to the project's
+`.data/chroma` directory. A configured relative path is resolved from your current
+working directory. The database includes `chroma.sqlite3` and Chroma index files,
+containing vectors, text, and source metadata. `.data/` is excluded from Git;
+add an ignore rule if you configure another storage location.
+
+On each request, content-based IDs identify added/changed passages. Only new
+passages are embedded, unchanged vectors are reused, and stale records are
+removed after successful upsert. Empty corpora clear their own collection.
+Collections are separated by corpus path and model/chunking version. The local
+embedding model is fixed in code; `LLM_MODEL` selects only the Groq answer model.
+
+The question is embedded with the same model, then Chroma returns up to three
+nearest passages. Cosine distance is lower for more similar vectors. Only results
+at or below `RAG_MAX_DISTANCE` are used. The default `0.65` is a starting point,
+not a measured confidence score: tune it with relevant and unanswerable questions.
+Lower it for stricter matching; raise it for broader recall (allowed range 0?2).
+
+To run the earlier keyword example, explicitly set `RAG_BACKEND=keyword`.
+There is no silent fallback when vector indexing or model download fails.
+
+Chroma persists across local process restarts when the same files remain on disk.
+Streamlit Community Cloud storage may be recreated on restart/redeploy; the app
+can rebuild its demo index. Use a server-backed vector database or durable volume
+for production persistence. This embedded client serializes indexing/query calls
+inside one process; it is not designed here as a multi-process ingestion service.
+See [Chroma clients](https://docs.trychroma.com/reference/python/client) and
+[embedding functions](https://docs.trychroma.com/docs/embeddings/embedding-functions).
 
 ### Add or change policy documents
 
@@ -402,10 +453,9 @@ The policy Markdown files are included in the Python package for installed use.
 4. Add retrieval tests for the intended questions and for unrelated questions.
    Run the offline test suite before using the new policies.
 
-Only approved server-side Markdown documents are loaded. PDF ingestion, browser
-uploads, semantic search, and vector database persistence are not implemented.
-For larger collections, replace `retrieve_policy` with a semantic retriever;
-the graph accepts an injected retriever so its routing can remain the same.
+Only approved server-side Markdown documents are loaded. PDF ingestion and browser
+uploads are not implemented. Semantic search and local vector persistence are
+implemented; the graph still accepts an injected retriever for tests or other stores.
 See the [LangChain retrieval guide](https://docs.langchain.com/oss/python/deepagents/retrieval)
 for retrieval patterns and embedding/vector-store concepts.
 
@@ -417,7 +467,7 @@ out-of-range cited responses are replaced with a message and the retrieved
 excerpts. Provider failures reach the normal CLI/UI error handler.
 
 Citation validation checks IDs, not whether every claim is entailed by its
-source. Keyword overlap can miss paraphrases or retrieve irrelevant passages;
+source. Similarity search can miss relevant evidence or retrieve irrelevant passages;
 a match does not prove that a question is answerable. Review the displayed
 excerpts and evaluate answer correctness before connecting real policies.
 The included policies are fictional examples, not actual store commitments.
@@ -438,7 +488,7 @@ combined eligibility workflow remain possible extensions.
 | Agent fails to call the tool | Use a tool-capable model and include an explicit order ID. Model tool selection can vary. |
 | Hybrid returns a plain template | Empty replies or model invocation failures trigger the factual template fallback; model construction/configuration failures are still errors. |
 | An earlier ID is forgotten | Each submission is independent; include the order ID in the new request. |
-| No policy evidence | Use keywords present in the Markdown policy body; inspect the source documents. PDF upload is not implemented. |
+| No policy evidence | Inspect the policy documents and tune RAG_MAX_DISTANCE; ensure indexing succeeded. PDF upload is not implemented. |
 
 ## Verify
 
